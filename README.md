@@ -9,6 +9,12 @@ Record audio from your microphone or transcribe an audio file locally with `whis
 - `whisper-cli` from whisper.cpp
 - A whisper.cpp model file
 
+## Model
+
+Transcription runs locally through `whisper-cli` using a Whisper model from
+whisper.cpp. By default, the script uses `~/whisper-models/ggml-small.en.bin`,
+the English-only Small model. Select a different model file with `--model`.
+
 ## Run
 
 ```bash
@@ -21,4 +27,6 @@ To transcribe an audio file instead, use:
 python voice-transcribe.py --input /path/to/audio.wav
 ```
 
-`--input` supports the audio formats accepted by your `whisper-cli` build. `--model` defaults to `~/whisper-models/ggml-small.en.bin`; microphone recording lasts 5 seconds by default and can be changed with `--duration`.
+`--input` supports the audio formats accepted by your `whisper-cli` build.
+Microphone recording lasts 5 seconds by default and can be changed with
+`--duration`.
