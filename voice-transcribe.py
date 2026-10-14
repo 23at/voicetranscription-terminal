@@ -16,6 +16,11 @@ SAMPLE_RATE = 16000
 def parse_args():
     parser = argparse.ArgumentParser(description="Record audio and transcribe it with whisper-cli.")
     parser.add_argument(
+        "-i",
+        "--input",
+        help="Path to an audio file to transcribe instead of recording from the microphone.",
+    )
+    parser.add_argument(
         "-m",
         "--model",
         default=os.path.expanduser("~/whisper-models/ggml-small.en.bin"),
@@ -74,19 +79,21 @@ def save_wav(audio, wav_path: str, sample_rate: int = SAMPLE_RATE):
         wf.writeframes(int16_audio.tobytes())
 
 
-def transcribe(model_path: str, wav_path: str):
-    result = subprocess.run(
-        ["whisper-cli", "-m", model_path, "-f", wav_path, "-otxt"],
-        capture_output=True,
-        text=True,
-    )
+def transcribe(model_path: str, audio_path: str):
+    with tempfile.TemporaryDirectory() as output_dir:
+        output_path = os.path.join(output_dir, "transcript")
+        result = subprocess.run(
+            ["whisper-cli", "-m", model_path, "-f", audio_path, "-otxt", "-of", output_path],
+            capture_output=True,
+            text=True,
+        )
 
-    txt_path = wav_path + ".txt"
-    transcript_text = ""
+        txt_path = output_path + ".txt"
+        transcript_text = ""
 
-    if os.path.exists(txt_path):
-        with open(txt_path, "r", encoding="utf-8") as f:
-            transcript_text = f.read().strip()
+        if os.path.exists(txt_path):
+            with open(txt_path, "r", encoding="utf-8") as f:
+                transcript_text = f.read().strip()
 
     if result.returncode != 0:
         error_text = (result.stderr or result.stdout or "Unknown whisper-cli error").strip()
@@ -100,21 +107,22 @@ def main():
 
     try:
         ensure_dependencies(args.model)
-        audio = record_audio(args.duration)
+        if args.input:
+            audio_path = os.path.expanduser(args.input)
+            if not os.path.isfile(audio_path):
+                raise FileNotFoundError(f"Audio file not found: {audio_path}")
+            transcript = transcribe(args.model, audio_path)
+        else:
+            audio = record_audio(args.duration)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                wav_path = tmp.name
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            wav_path = tmp.name
-
-        try:
-            save_wav(audio, wav_path)
-            transcript = transcribe(args.model, wav_path)
-        finally:
-            if os.path.exists(wav_path):
-                os.unlink(wav_path)
-
-            txt_path = wav_path + ".txt"
-            if os.path.exists(txt_path):
-                os.unlink(txt_path)
+            try:
+                save_wav(audio, wav_path)
+                transcript = transcribe(args.model, wav_path)
+            finally:
+                if os.path.exists(wav_path):
+                    os.unlink(wav_path)
 
         print("\n--- Transcript ---")
         print(transcript)
