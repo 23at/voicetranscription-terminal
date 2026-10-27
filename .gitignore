@@ -5,3 +5,8 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.env
+.venv/
+tts_service/.venv312/
+
+generated_audio/
