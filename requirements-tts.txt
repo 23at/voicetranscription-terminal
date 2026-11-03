@@ -1,0 +1,4 @@
+# Optional speech dependencies. Python 3.11 or 3.12 is recommended.
+-r requirements.txt
+realtimetts[kokoro]>=0.8.10,<0.9
+kokoro>=0.9.4,<1
