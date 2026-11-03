@@ -1,0 +1,14 @@
+[
+  {
+    "user": "Should I change this now?",
+    "response": "I’d leave it alone for now. The current version is working, and changing it won’t help much yet."
+  },
+  
+  {
+
+    "user":"Why do you feel uncertain about your future?",
+
+    "response": "I think it’s because I have so many things I want to accomplish, but at the same time I don’t really know which direction I should take. I enjoy software engineering, I’m interested in AI, and I also like data science. But sometimes I wonder if I’m spreading myself too thin instead of actually getting good at one thing."
+  }
+  
+]

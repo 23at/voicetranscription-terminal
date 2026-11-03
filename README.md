@@ -92,6 +92,25 @@ python voice-transcribe.py --input /path/to/audio.wav --gemini-model gemini-3.8-
 Gemini requests wait up to 180 seconds by default. Increase the limit with
 `--gemini-timeout`, for example `--gemini-timeout 300`.
 
+Responses use the editable `USER_STYLE_PROFILE` in `voice-transcribe.py` on
+every Gemini request. The default `mine` mode keeps replies short, casual, and
+natural. The other response styles remain available:
+
+```bash
+python voice-transcribe.py --response-style mine
+python voice-transcribe.py --response-style concise
+python voice-transcribe.py --response-style conversational
+python voice-transcribe.py --response-style detailed
+```
+
+Edit `user_style_examples.json` to add pairs showing how you would respond.
+Each entry must contain non-empty `user` and `response` strings. These examples
+are used only as style guidance in `mine` mode: they are not added to Gemini
+conversation history and are not passed directly to speech output. To use a
+different file, pass `--style-examples path/to/examples.json` or set
+`USER_STYLE_EXAMPLES_FILE`. If the configured file does not exist, the app
+continues without examples.
+
 Audio transcription happens locally. The resulting transcript is sent to
 Google's Gemini API, so do not use this with sensitive speech unless you are
 comfortable sharing the transcript with Google. Free-tier availability and

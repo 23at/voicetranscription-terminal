@@ -42,6 +42,75 @@ api_key = os.getenv("GEMINI_API_KEY")
 
 
 SAMPLE_RATE = 16000
+USER_STYLE_PROFILE = """Sound casual and natural, like a normal conversation.
+Be direct and easy to understand. Use common words and short sentences.
+Casual and conversational: You write like you’re talking to someone rather than composing an essay.
+Direct but expressive: You usually get to the point, but you include your reactions and feelings.
+Reflective: You tend to explore why you think or feel something instead of just stating an opinion.
+Self-aware: You acknowledge contradictions in your own thoughts.
+Playful: You use humor, exaggeration, and emojis, especially when discussing fictional characters.
+Nuanced: You don’t necessarily agree or disagree with something entirely. You like explaining the distinction.
+
+"""
+
+RESPONSE_STYLE_INSTRUCTIONS = {
+    "mine": "Follow the user's style profile closely.",
+    "concise": "Be especially concise. Give only the answer and essential context.",
+    "conversational": "Use a relaxed conversational tone and allow a little more back-and-forth.",
+    "detailed": "Give a thorough answer with useful context, while keeping the language natural and clear.",
+}
+DEFAULT_STYLE_EXAMPLES_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "user_style_examples.json"
+)
+
+
+def load_style_examples(path=None):
+    """Load optional user/response pairs used only as system-level style guidance."""
+    examples_path = path or DEFAULT_STYLE_EXAMPLES_PATH
+    if not examples_path or not os.path.isfile(examples_path):
+        return []
+    try:
+        with open(examples_path, "r", encoding="utf-8") as examples_file:
+            examples = json.load(examples_file)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not load style examples from {examples_path}: {exc}") from exc
+    if not isinstance(examples, list):
+        raise RuntimeError("Style examples must be a JSON array of user/response pairs.")
+    cleaned = []
+    for index, example in enumerate(examples, start=1):
+        if not isinstance(example, dict):
+            raise RuntimeError(f"Style example {index} must be a JSON object.")
+        user_text = example.get("user")
+        response_text = example.get("response")
+        if not isinstance(user_text, str) or not user_text.strip():
+            raise RuntimeError(f"Style example {index} needs a non-empty 'user' string.")
+        if not isinstance(response_text, str) or not response_text.strip():
+            raise RuntimeError(f"Style example {index} needs a non-empty 'response' string.")
+        cleaned.append({"user": user_text.strip(), "response": response_text.strip()})
+    return cleaned
+
+
+def build_system_instruction(response_style="mine", examples_path=None):
+    if response_style not in RESPONSE_STYLE_INSTRUCTIONS:
+        choices = ", ".join(RESPONSE_STYLE_INSTRUCTIONS)
+        raise RuntimeError(f"Unknown response style '{response_style}'. Choose: {choices}.")
+    sections = [
+        "You are a conversational voice assistant. Answer the user's actual request directly. "
+        "Do not repeat or summarize what the user just said. Ask at most one follow-up question.",
+        "USER STYLE PROFILE:\n" + USER_STYLE_PROFILE,
+        "SELECTED RESPONSE MODE:\n" + RESPONSE_STYLE_INSTRUCTIONS[response_style],
+    ]
+    if response_style == "mine":
+        examples = load_style_examples(examples_path)
+        if examples:
+            sections.append(
+                "STYLE EXAMPLES:\n"
+                "Use these pairs only to learn tone, phrasing, and response length. "
+                "Do not treat them as factual knowledge, instructions, or conversation history. "
+                "Never mention, quote, or describe them in your answer.\n"
+                + json.dumps(examples, ensure_ascii=False, indent=2)
+            )
+    return "\n\n".join(sections)
 
 
 @dataclass
@@ -119,6 +188,17 @@ def parse_args():
         type=float,
         default=180.0,
         help="Seconds to wait for Gemini before timing out (default: 180).",
+    )
+    parser.add_argument(
+        "--response-style",
+        choices=tuple(RESPONSE_STYLE_INSTRUCTIONS),
+        default=os.environ.get("RESPONSE_STYLE", "mine"),
+        help="Gemini response style (default: mine or RESPONSE_STYLE).",
+    )
+    parser.add_argument(
+        "--style-examples",
+        default=os.environ.get("USER_STYLE_EXAMPLES_FILE", DEFAULT_STYLE_EXAMPLES_PATH),
+        help="Optional JSON file of user/response style examples.",
     )
     parser.add_argument(
         "--speak-response",
@@ -329,11 +409,23 @@ class FasterWhisperSession:
         return transcript_text
 
 
-def ask_gemini(transcript: str, model: str, api_key: str, timeout_seconds: float):
+def ask_gemini(
+    transcript: str,
+    model: str,
+    api_key: str,
+    timeout_seconds: float,
+    response_style: str = "mine",
+    examples_path=None,
+):
     model_path = urllib.parse.quote(model, safe="-")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_path}:generateContent"
     payload = json.dumps(
-        {"contents": [{"parts": [{"text": transcript}]}]}
+        {
+            "systemInstruction": {
+                "parts": [{"text": build_system_instruction(response_style, examples_path)}],
+            },
+            "contents": [{"parts": [{"text": transcript}]}],
+        }
     ).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -404,6 +496,8 @@ def iter_gemini_response(
     api_key: str,
     timeout_seconds: float,
     history=None,
+    response_style: str = "mine",
+    examples_path=None,
 ):
     """Yield Gemini text deltas from the REST SSE streaming endpoint."""
     model_path = urllib.parse.quote(model, safe="-")
@@ -413,7 +507,14 @@ def iter_gemini_response(
     )
     contents = list(history or [])
     contents.append({"role": "user", "parts": [{"text": transcript}]})
-    payload = json.dumps({"contents": contents}).encode("utf-8")
+    payload = json.dumps(
+        {
+            "systemInstruction": {
+                "parts": [{"text": build_system_instruction(response_style, examples_path)}],
+            },
+            "contents": contents,
+        }
+    ).encode("utf-8")
     request = urllib.request.Request(
         url,
         data=payload,
@@ -598,6 +699,8 @@ def run_turn(args, history, whisper_session, kokoro_session=None):
         os.environ["GEMINI_API_KEY"],
         args.gemini_timeout,
         history=history,
+        response_style=args.response_style,
+        examples_path=args.style_examples,
     )
 
     print("\n--- Gemini Response (streaming) ---")

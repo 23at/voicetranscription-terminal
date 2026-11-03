@@ -157,6 +157,31 @@ class GeminiStreamingTests(unittest.TestCase):
         payload = json.loads(request.data)
         self.assertEqual(payload["contents"][-1]["parts"][0]["text"], "Now")
         self.assertEqual(len(payload["contents"]), 2)
+        system_text = payload["systemInstruction"]["parts"][0]["text"]
+        self.assertIn(app.USER_STYLE_PROFILE, system_text)
+        self.assertIn("Should I change this now?", system_text)
+        self.assertNotIn("Should I change this now?", json.dumps(payload["contents"]))
+
+    def test_named_styles_keep_profile_and_examples_only_guide_mine(self):
+        concise = app.build_system_instruction("concise")
+        mine = app.build_system_instruction("mine")
+
+        self.assertIn(app.USER_STYLE_PROFILE, concise)
+        self.assertIn("especially concise", concise)
+        self.assertNotIn("STYLE EXAMPLES", concise)
+        self.assertIn("STYLE EXAMPLES", mine)
+
+    def test_response_style_defaults_to_mine_and_preserves_other_choices(self):
+        with patch.object(sys, "argv", ["voice-transcribe.py", "--input", __file__]):
+            args = app.parse_args()
+        self.assertEqual(args.response_style, "mine")
+        for style in ("concise", "conversational", "detailed"):
+            with patch.object(
+                sys,
+                "argv",
+                ["voice-transcribe.py", "--input", __file__, "--response-style", style],
+            ):
+                self.assertEqual(app.parse_args().response_style, style)
 
     def test_empty_stream_is_an_error(self):
         response = self.Response([b"data: {\"promptFeedback\": {\"blockReason\": \"SAFETY\"}}\n", b"\n"])
