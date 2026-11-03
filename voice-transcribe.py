@@ -11,8 +11,6 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import wave
-import numpy as np
-import sounddevice as sd
 
 
 def load_dotenv(path=None):
@@ -43,7 +41,9 @@ SAMPLE_RATE = 16000
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Record audio and transcribe it with whisper-cli.")
+    parser = argparse.ArgumentParser(
+        description="Record audio and transcribe it locally with Faster-Whisper."
+    )
     parser.add_argument(
         "-i",
         "--input",
@@ -52,8 +52,33 @@ def parse_args():
     parser.add_argument(
         "-m",
         "--model",
-        default=os.path.expanduser("~/whisper-models/ggml-small.en.bin"),
-        help="Path to the whisper model file.",
+        default=os.environ.get("WHISPER_MODEL", "small.en"),
+        help=(
+            "Faster-Whisper model name or local model directory "
+            "(default: small.en or WHISPER_MODEL)."
+        ),
+    )
+    parser.add_argument(
+        "--whisper-device",
+        choices=("cpu", "cuda", "auto"),
+        default=os.environ.get("WHISPER_DEVICE", "cpu"),
+        help="Device used for transcription (default: cpu or WHISPER_DEVICE).",
+    )
+    parser.add_argument(
+        "--whisper-compute-type",
+        default=os.environ.get("WHISPER_COMPUTE_TYPE", "int8"),
+        help=(
+            "CTranslate2 compute type (default: int8 or WHISPER_COMPUTE_TYPE). "
+            "For an NVIDIA GPU, try float16."
+        ),
+    )
+    parser.add_argument(
+        "--language",
+        default=os.environ.get("WHISPER_LANGUAGE", "en"),
+        help=(
+            "Spoken language code (default: en or WHISPER_LANGUAGE); "
+            "use 'auto' to detect it."
+        ),
     )
     parser.add_argument(
         "-d",
@@ -102,16 +127,13 @@ def parse_args():
     return parser.parse_args()
 
 
-def ensure_dependencies(model_path):
-    if shutil.which("whisper-cli") is None:
+def ensure_dependencies():
+    try:
+        import faster_whisper  # noqa: F401
+    except ImportError as exc:
         raise RuntimeError(
-            "whisper-cli was not found in PATH. Install whisper.cpp and ensure the binary is available."
-        )
-
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(
-            f"Model file not found: {model_path}. Update --model or set the correct path."
-        )
+            "faster-whisper is not installed. Run: python -m pip install -r requirements.txt"
+        ) from exc
 
     if not os.environ.get("GEMINI_API_KEY"):
         raise RuntimeError(
@@ -120,6 +142,14 @@ def ensure_dependencies(model_path):
 
 
 def record_audio(duration_seconds: float, sample_rate: int = SAMPLE_RATE):
+    try:
+        import sounddevice as sd
+    except ImportError as exc:
+        raise RuntimeError(
+            "Microphone recording requires sounddevice. "
+            "Run: python -m pip install -r requirements.txt"
+        ) from exc
+
     print(f"Recording for {duration_seconds:.1f} seconds...")
     audio = sd.rec(
         int(duration_seconds * sample_rate),
@@ -136,6 +166,14 @@ def record_audio(duration_seconds: float, sample_rate: int = SAMPLE_RATE):
 
 
 def save_wav(audio, wav_path: str, sample_rate: int = SAMPLE_RATE):
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError(
+            "Microphone recording requires numpy. "
+            "Run: python -m pip install -r requirements.txt"
+        ) from exc
+
     audio = np.asarray(audio, dtype=np.float32)
     if np.max(np.abs(audio)) > 1.0:
         audio = audio / np.max(np.abs(audio))
@@ -150,27 +188,34 @@ def save_wav(audio, wav_path: str, sample_rate: int = SAMPLE_RATE):
         wf.writeframes(int16_audio.tobytes())
 
 
-def transcribe(model_path: str, audio_path: str):
-    with tempfile.TemporaryDirectory() as output_dir:
-        output_path = os.path.join(output_dir, "transcript")
-        result = subprocess.run(
-            ["whisper-cli", "-m", model_path, "-f", audio_path, "-otxt", "-of", output_path],
-            capture_output=True,
-            text=True,
+def transcribe(
+    model_name: str,
+    audio_path: str,
+    device: str,
+    compute_type: str,
+    language: str,
+):
+    try:
+        from faster_whisper import WhisperModel
+
+        print(f"Loading Faster-Whisper model '{model_name}' on {device}...")
+        model = WhisperModel(model_name, device=device, compute_type=compute_type)
+        segments, info = model.transcribe(
+            audio_path,
+            language=None if language.lower() == "auto" else language,
+            beam_size=5,
         )
+        transcript_text = "".join(segment.text for segment in segments).strip()
+    except Exception as exc:
+        raise RuntimeError(f"Transcription failed: {exc}") from exc
 
-        txt_path = output_path + ".txt"
-        transcript_text = ""
+    if not transcript_text:
+        raise RuntimeError("Transcription completed but no speech was detected.")
 
-        if os.path.exists(txt_path):
-            with open(txt_path, "r", encoding="utf-8") as f:
-                transcript_text = f.read().strip()
-
-    if result.returncode != 0:
-        error_text = (result.stderr or result.stdout or "Unknown whisper-cli error").strip()
-        raise RuntimeError(f"Transcription failed: {error_text}")
-
-    return transcript_text or (result.stdout or result.stderr or "").strip()
+    detected_language = getattr(info, "language", None)
+    if language.lower() == "auto" and detected_language:
+        print(f"Detected language: {detected_language}")
+    return transcript_text
 
 
 def ask_gemini(transcript: str, model: str, api_key: str, timeout_seconds: float):
@@ -292,12 +337,18 @@ def main():
     args = parse_args()
 
     try:
-        ensure_dependencies(args.model)
+        ensure_dependencies()
         if args.input:
             audio_path = os.path.expanduser(args.input)
             if not os.path.isfile(audio_path):
                 raise FileNotFoundError(f"Audio file not found: {audio_path}")
-            transcript = transcribe(args.model, audio_path)
+            transcript = transcribe(
+                args.model,
+                audio_path,
+                args.whisper_device,
+                args.whisper_compute_type,
+                args.language,
+            )
         else:
             audio = record_audio(args.duration)
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -305,7 +356,13 @@ def main():
 
             try:
                 save_wav(audio, wav_path)
-                transcript = transcribe(args.model, wav_path)
+                transcript = transcribe(
+                    args.model,
+                    wav_path,
+                    args.whisper_device,
+                    args.whisper_compute_type,
+                    args.language,
+                )
             finally:
                 if os.path.exists(wav_path):
                     os.unlink(wav_path)

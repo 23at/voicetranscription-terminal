@@ -1,26 +1,58 @@
 # Voice Transcription
 
 Record audio from your microphone or transcribe an audio file locally with
-`whisper-cli`, then send the transcript to Gemini and display its response.
+Faster-Whisper, then send the transcript to Gemini and display its response.
+Transcription works on Windows and macOS.
 
 ## Requirements
 
-- Python 3
-- `numpy` and `sounddevice` (`python -m pip install numpy sounddevice`)
-- `whisper-cli` from whisper.cpp
-- A whisper.cpp model file
+- Python 3.9 or newer
+- The Python packages in `requirements.txt`
 - A Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey)
+
+Create a virtual environment and install the dependencies:
+
+### Windows (PowerShell)
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+On Windows, CTranslate2 also requires the Microsoft Visual C++ runtime, which
+is already present on most systems.
+
+### macOS
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
 
 ## Model
 
-Transcription runs locally through `whisper-cli` using a Whisper model from
-whisper.cpp. By default, the script uses `~/whisper-models/ggml-small.en.bin`,
-the English-only Small model. Select a different model file with `--model`.
+Transcription runs locally through Faster-Whisper. The default model is
+`small.en`. It is downloaded automatically on the first run and cached for
+later use. Select another model name or a local Faster-Whisper model directory
+with `--model`.
+
+CPU transcription with `int8` computation is the cross-platform default. A
+Windows machine with a correctly configured NVIDIA CUDA environment can use:
+
+```powershell
+python voice-transcribe.py --whisper-device cuda --whisper-compute-type float16
+```
+
+Use `--language auto` for automatic language detection, or pass a language
+code such as `en`, `es`, or `fr`. A multilingual model such as `small` is
+required for languages other than English.
 
 ## Run
 
 ```bash
-python voice-transcribe.py --model /path/to/model.bin --duration 5
+python voice-transcribe.py --model small.en --duration 5
 ```
 
 To transcribe an audio file instead, use:
@@ -29,7 +61,9 @@ To transcribe an audio file instead, use:
 python voice-transcribe.py --input /path/to/audio.wav
 ```
 
-`--input` supports the audio formats accepted by your `whisper-cli` build.
+`--input` supports common formats such as WAV, MP3, M4A, and FLAC. Faster-
+Whisper uses PyAV, whose wheels bundle the required FFmpeg decoding libraries,
+so a separate FFmpeg installation is normally unnecessary.
 Microphone recording lasts 5 seconds by default and can be changed with
 `--duration`.
 
